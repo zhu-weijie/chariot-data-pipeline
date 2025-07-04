@@ -1,0 +1,7 @@
+# Application Dependencies
+pydantic==2.11.7
+pydantic-settings==2.10.1
+
+# Development Tools
+black==25.1.0
+ruff==0.12.2
