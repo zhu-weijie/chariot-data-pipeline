@@ -2,6 +2,8 @@ services:
   python_app:
     build: .
     container_name: chariot_app
+    env_file:
+      - .env
     volumes:
       - .:/app
     depends_on:
