@@ -1,9 +1,12 @@
 import structlog
 from src.logging_config import setup_logging
+from scripts.neo4j_init import initialize_neo4j
 
 setup_logging()
 
 log = structlog.get_logger()
+
+initialize_neo4j()
 
 
 def main():
