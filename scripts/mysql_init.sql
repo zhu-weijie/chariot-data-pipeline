@@ -1,4 +1,3 @@
-CREATE DATABASE IF NOT EXISTS chariot_db;
 USE chariot_db;
 
 CREATE TABLE movies (
