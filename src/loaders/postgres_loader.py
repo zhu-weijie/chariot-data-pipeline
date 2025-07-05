@@ -1,4 +1,5 @@
 import psycopg2
+from psycopg2 import extras
 import structlog
 from typing import List, Dict
 
@@ -62,7 +63,7 @@ class PostgresLoader(Loader):
         try:
             with self._get_connection() as conn:
                 with conn.cursor() as cursor:
-                    psycopg2.extras.execute_batch(cursor, query, transformed_batch)
+                    extras.execute_batch(cursor, query, transformed_batch)
                 conn.commit()
                 log.info("Batch written successfully.")
         except psycopg2.Error as err:
