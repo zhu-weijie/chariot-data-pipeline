@@ -16,12 +16,16 @@ services:
   mysql_db:
     image: mysql:8.0
     container_name: chariot_mysql
+    command: --local_infile=1
     environment:
       MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: chariot_db
     ports:
       - "3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
+      - ./scripts/mysql_init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./data:/var/lib/mysql-files
     networks:
       - chariot_network
 
