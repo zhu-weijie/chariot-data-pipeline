@@ -1,3 +1,4 @@
+from pydantic import ConfigDict
 from pydantic_settings import BaseSettings
 
 
@@ -7,8 +8,7 @@ class MySQLSettings(BaseSettings):
     host: str
     db: str
 
-    class Config:
-        env_prefix = "MYSQL_"
+    model_config = ConfigDict(env_prefix="MYSQL_")
 
 
 class PostgresSettings(BaseSettings):
@@ -17,8 +17,7 @@ class PostgresSettings(BaseSettings):
     host: str
     db: str
 
-    class Config:
-        env_prefix = "POSTGRES_"
+    model_config = ConfigDict(env_prefix="POSTGRES_")
 
 
 class Neo4jSettings(BaseSettings):
@@ -26,15 +25,13 @@ class Neo4jSettings(BaseSettings):
     password: str
     uri: str
 
-    class Config:
-        env_prefix = "NEO4J_"
+    model_config = ConfigDict(env_prefix="NEO4J_")
 
 
 class EtlSettings(BaseSettings):
     batch_size: int
 
-    class Config:
-        env_prefix = "ETL_"
+    model_config = ConfigDict(env_prefix="ETL_")
 
 
 class Settings(BaseSettings):
