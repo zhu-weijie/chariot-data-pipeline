@@ -48,7 +48,7 @@ class PipelineConductor:
 
                 loader.write_batch(batch)
 
-                high_water_mark = batch[-1]["movieId"]
+                high_water_mark = self.extractor.get_next_high_water_mark(batch)
                 log.info(
                     "Batch processed. New high-water mark.",
                     loader=loader_name,
