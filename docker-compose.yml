@@ -27,7 +27,7 @@ services:
       - "3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
-      - ./scripts/mysql_init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./scripts/mysql:/docker-entrypoint-initdb.d
       - ./data:/var/lib/mysql-files
     networks:
       - chariot_network
@@ -48,7 +48,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./scripts:/docker-entrypoint-initdb.d
+      - ./scripts/postgres:/docker-entrypoint-initdb.d
     networks:
       - chariot_network
     healthcheck:
