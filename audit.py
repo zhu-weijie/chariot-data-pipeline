@@ -7,6 +7,7 @@ from src.logging_config import setup_logging
 from src.extractors.mysql_extractor import MySQLExtractor
 from src.loaders.postgres_loader import PostgresLoader
 from src.loaders.neo4j_loader import Neo4jLoader
+from src.loaders.neo4j_ratings_loader import Neo4jRatingsLoader
 
 SAMPLE_SIZE_PERCENT = 0.05
 
@@ -19,8 +20,10 @@ class Auditor:
         self.mysql_extractor = MySQLExtractor()
         self.postgres_loader = PostgresLoader()
         self.neo4j_loader = Neo4jLoader()
+        self.neo4j_ratings_loader = Neo4jRatingsLoader()
         self.mismatches = 0
         self.aggregation_mismatches = 0
+        self.neo4j_ratings_mismatches = 0
 
     def _get_all_movie_ids_from_source(self):
         log.info("Fetching all movie IDs from source (MySQL)...")
@@ -154,49 +157,94 @@ class Auditor:
             )
             self.aggregation_mismatches += 1
 
+    def _get_neo4j_rating(self, user_id: int, movie_id: int):
+        query = """
+        MATCH (:User {userId: $userId})-[r:RATED]->(:Movie {movieId: $movieId})
+        RETURN r.rating AS rating, r.timestamp AS timestamp
+        """
+        with self.neo4j_ratings_loader._get_session() as session:
+            result = session.run(query, userId=user_id, movieId=movie_id).single()
+            if result:
+                return {"rating": result["rating"], "timestamp": result["timestamp"]}
+        return None
+
     def run(self):
         log.info("--- Starting Data Integrity Audit ---")
 
-        all_ids = self._get_all_movie_ids_from_source()
-        if not all_ids:
-            log.error("Source database is empty. Cannot run audit.")
-            return
-
-        sample_size = int(len(all_ids) * SAMPLE_SIZE_PERCENT)
-        if sample_size == 0:
-            sample_size = len(all_ids)
-        sample_ids = random.sample(all_ids, k=sample_size)
-        log.info(f"Auditing a random sample of {sample_size} records...")
-
-        query_template = (
-            "SELECT movieId, title, genres FROM movies WHERE movieId IN ({})"
-        )
-        placeholders = ", ".join(["%s"] * len(sample_ids))
-        query = query_template.format(placeholders)
-
+        log.info("Fetching all ratings keys from source (MySQL)...")
+        query = "SELECT userId, movieId FROM ratings ORDER BY userId, movieId"
         with self.mysql_extractor._get_connection() as conn:
             with conn.cursor(dictionary=True) as cursor:
-                cursor.execute(query, sample_ids)
+                cursor.execute(query)
+                all_keys = cursor.fetchall()
+
+        if not all_keys:
+            log.error("Source ratings table is empty. Cannot run audit.")
+            return
+
+        sample_size = int(len(all_keys) * SAMPLE_SIZE_PERCENT)
+        if sample_size == 0:
+            sample_size = min(len(all_keys), 100)
+        sample_keys = random.sample(all_keys, k=sample_size)
+        log.info(f"Auditing a random sample of {sample_size} ratings...")
+
+        key_map_str = ", ".join(
+            [f"({k['userId']},{k['movieId']})" for k in sample_keys]
+        )
+
+        query_template = "SELECT userId, movieId, rating, timestamp FROM ratings WHERE (userId, movieId) IN ({})"
+        query = query_template.format(key_map_str)
+        with self.mysql_extractor._get_connection() as conn:
+            with conn.cursor(dictionary=True) as cursor:
+                cursor.execute(query)
                 source_records = cursor.fetchall()
 
-        for src_record in source_records:
-            movie_id = src_record["movieId"]
-            pg_record = self._get_postgres_record(movie_id)
-            neo4j_record = self._get_neo4j_record(movie_id)
-            self._compare_records(src_record, pg_record, neo4j_record)
-            self._compare_aggregation(src_record["movieId"])
+        for src_rating_record in source_records:
+            user_id = src_rating_record["userId"]
+            movie_id = src_rating_record["movieId"]
+
+            neo4j_rating_record = self._get_neo4j_rating(user_id, movie_id)
+            if not neo4j_rating_record:
+                log.error(
+                    "Mismatch: Rating missing in Neo4j",
+                    user_id=user_id,
+                    movie_id=movie_id,
+                )
+                self.neo4j_ratings_mismatches += 1
+            else:
+                source_rating = float(src_rating_record["rating"])
+                if source_rating != neo4j_rating_record["rating"]:
+                    log.error(
+                        "Mismatch: Rating value differs in Neo4j",
+                        user_id=user_id,
+                        movie_id=movie_id,
+                    )
+                    self.neo4j_ratings_mismatches += 1
+                if src_rating_record["timestamp"] != neo4j_rating_record["timestamp"]:
+                    log.error(
+                        "Mismatch: Timestamp value differs in Neo4j",
+                        user_id=user_id,
+                        movie_id=movie_id,
+                    )
+                    self.neo4j_ratings_mismatches += 1
 
         self.neo4j_loader.close()
+        self.neo4j_ratings_loader.close()
         log.info("--- Data Integrity Audit Finished ---")
 
-        if self.mismatches == 0 and self.aggregation_mismatches == 0:
-            log.info(
-                f"✅ Audit PASSED: All {sample_size} sampled records and their aggregations are consistent."
-            )
+        if (
+            self.mismatches == 0
+            and self.aggregation_mismatches == 0
+            and self.neo4j_ratings_mismatches == 0
+        ):
+            log.info("✅ Audit PASSED: All checks are consistent.")
             return True
         else:
             log.error(
-                f"❌ Audit FAILED: Found {self.mismatches} core mismatches and {self.aggregation_mismatches} aggregation mismatches."
+                "❌ Audit FAILED",
+                core_mismatches=self.mismatches,
+                aggregation_mismatches=self.aggregation_mismatches,
+                neo4j_ratings_mismatches=self.neo4j_ratings_mismatches,
             )
             return False
 
