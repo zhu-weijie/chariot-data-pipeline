@@ -9,6 +9,7 @@ from src.extractors.mysql_ratings_extractor import MySQLRatingsExtractor
 from src.loaders.postgres_loader import PostgresLoader
 from src.loaders.postgres_ratings_loader import PostgresRatingsLoader
 from src.loaders.neo4j_loader import Neo4jLoader
+from src.loaders.neo4j_ratings_loader import Neo4jRatingsLoader
 from src.conductor import PipelineConductor
 
 setup_logging()
@@ -19,7 +20,7 @@ log = structlog.get_logger()
 def main():
     log.info("--- Chariot Data Pipeline: Starting Full Run ---")
 
-    log.info("--- Stage 1: Transferring core data ---")
+    log.info("--- Stage 1: Transferring core movie data ---")
     movies_extractor = MySQLExtractor()
     postgres_movies_loader = PostgresLoader()
     neo4j_movies_loader = Neo4jLoader()
@@ -30,19 +31,22 @@ def main():
     movies_conductor.run_concurrently()
     neo4j_movies_loader.close()
 
+    log.info("--- Stage 2: Transferring raw ratings data ---")
     ratings_extractor = MySQLRatingsExtractor()
     postgres_ratings_loader = PostgresRatingsLoader()
+    neo4j_ratings_loader = Neo4jRatingsLoader()
+
     ratings_conductor = PipelineConductor(
-        extractor=ratings_extractor, loaders=[postgres_ratings_loader]
+        extractor=ratings_extractor,
+        loaders=[postgres_ratings_loader, neo4j_ratings_loader],
     )
     ratings_conductor.run_concurrently()
+    neo4j_ratings_loader.close()
 
-    log.info("--- Stage 2: Launching parallel ratings aggregation subprocess ---")
-
+    log.info("--- Stage 3: Launching parallel ratings aggregation subprocess ---")
     result = subprocess.run(
         ["python", "run_aggregation.py"], capture_output=True, text=True
     )
-
     log.info("Aggregation subprocess stdout", output=result.stdout)
     if result.returncode != 0:
         log.error("Aggregation subprocess FAILED", stderr=result.stderr)
