@@ -49,3 +49,8 @@ class MySQLExtractor(Extractor):
         except mysql.connector.Error as err:
             log.error("Failed to read batch from MySQL", error=str(err))
             return []
+
+    def get_next_high_water_mark(self, batch: List[Dict]) -> int:
+        if not batch:
+            return 0
+        return batch[-1]["movieId"]
