@@ -85,6 +85,35 @@ class AggregationDispatcher:
 
         log.info("All worker processes have completed.")
 
+    def finalize_promotion(self):
+        log.info("Starting final data promotion.")
+        conn = self._get_connection()
+        try:
+            with conn.cursor() as cursor:
+                log.info("Locking tables and promoting data.")
+
+                cursor.execute("TRUNCATE TABLE movies.ratings_summary;")
+
+                cursor.execute(
+                    """
+                    INSERT INTO movies.ratings_summary (movie_id, average_rating, rating_count)
+                    SELECT movie_id, average_rating, rating_count
+                    FROM movies.ratings_summary_staging;
+                """
+                )
+
+                promoted_rows = cursor.rowcount
+
+                conn.commit()
+                log.info("Data promotion successful.", promoted_rows=promoted_rows)
+
+        except Exception as e:
+            conn.rollback()
+            log.error("Failed during data promotion", error=str(e))
+            raise
+        finally:
+            conn.close()
+
 
 def worker_process(batch_id: int):
     aggregator = RatingsAggregator()
