@@ -53,3 +53,9 @@ class MySQLRatingsExtractor(Extractor):
         except mysql.connector.Error as err:
             log.error("Failed to read ratings batch from MySQL", error=str(err))
             return []
+
+    def get_next_high_water_mark(self, batch: List[Dict]) -> Tuple[int, int]:
+        if not batch:
+            return (0, 0)
+        last_record = batch[-1]
+        return (last_record["userId"], last_record["movieId"])
