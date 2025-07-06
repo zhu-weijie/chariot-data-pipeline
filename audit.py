@@ -1,6 +1,7 @@
 import random
 import sys
 import structlog
+import numpy as np
 
 from src.logging_config import setup_logging
 from src.extractors.mysql_extractor import MySQLExtractor
@@ -19,6 +20,7 @@ class Auditor:
         self.postgres_loader = PostgresLoader()
         self.neo4j_loader = Neo4jLoader()
         self.mismatches = 0
+        self.aggregation_mismatches = 0
 
     def _get_all_movie_ids_from_source(self):
         log.info("Fetching all movie IDs from source (MySQL)...")
@@ -92,6 +94,66 @@ class Auditor:
             )
             self.mismatches += 1
 
+    def _get_raw_ratings_for_movie(self, movie_id: int):
+        query = "SELECT rating FROM ratings WHERE movieId = %s"
+        with self.mysql_extractor._get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query, (movie_id,))
+                return [row[0] for row in cursor.fetchall()]
+
+    def _get_postgres_summary_record(self, movie_id: int):
+        query = "SELECT movie_id, average_rating, rating_count FROM movies.ratings_summary WHERE movie_id = %s"
+        with self.postgres_loader._get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query, (movie_id,))
+                row = cursor.fetchone()
+                if row:
+                    return {
+                        "movie_id": row[0],
+                        "average_rating": float(row[1]),
+                        "rating_count": row[2],
+                    }
+        return None
+
+    def _compare_aggregation(self, movie_id):
+        log.info("Auditing aggregation for record", movie_id=movie_id)
+
+        raw_ratings = self._get_raw_ratings_for_movie(movie_id)
+        if not raw_ratings:
+            log.warn(
+                "No ratings in source for movie, skipping aggregation audit.",
+                movie_id=movie_id,
+            )
+            return
+
+        expected_avg = round(float(np.mean(raw_ratings)), 5)
+        expected_count = len(raw_ratings)
+
+        summary_record = self._get_postgres_summary_record(movie_id)
+
+        if not summary_record:
+            log.error(
+                "Aggregation Mismatch: Record missing in summary table",
+                movie_id=movie_id,
+            )
+            self.aggregation_mismatches += 1
+            return
+
+        if (
+            expected_count != summary_record["rating_count"]
+            or expected_avg != summary_record["average_rating"]
+        ):
+            log.error(
+                "Aggregation Mismatch: Data differs in summary table",
+                movie_id=movie_id,
+                expected={"avg": expected_avg, "count": expected_count},
+                found={
+                    "avg": summary_record["average_rating"],
+                    "count": summary_record["rating_count"],
+                },
+            )
+            self.aggregation_mismatches += 1
+
     def run(self):
         log.info("--- Starting Data Integrity Audit ---")
 
@@ -122,17 +184,20 @@ class Auditor:
             pg_record = self._get_postgres_record(movie_id)
             neo4j_record = self._get_neo4j_record(movie_id)
             self._compare_records(src_record, pg_record, neo4j_record)
+            self._compare_aggregation(src_record["movieId"])
 
         self.neo4j_loader.close()
         log.info("--- Data Integrity Audit Finished ---")
 
-        if self.mismatches == 0:
+        if self.mismatches == 0 and self.aggregation_mismatches == 0:
             log.info(
-                f"✅ Audit PASSED: All {sample_size} sampled records are consistent."
+                f"✅ Audit PASSED: All {sample_size} sampled records and their aggregations are consistent."
             )
             return True
         else:
-            log.error(f"❌ Audit FAILED: Found {self.mismatches} mismatched records.")
+            log.error(
+                f"❌ Audit FAILED: Found {self.mismatches} core mismatches and {self.aggregation_mismatches} aggregation mismatches."
+            )
             return False
 
 
