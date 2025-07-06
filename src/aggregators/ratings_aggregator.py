@@ -32,9 +32,13 @@ class RatingsAggregator:
 
     def process_batch(self, batch_id: int):
         log.info("Starting to process batch", batch_id=batch_id)
-        conn = self._get_connection()
 
+        fetch_query = "SELECT movie_id, rating FROM movies.ratings WHERE movie_id BETWEEN %s AND %s"
+
+        conn = None
         try:
+            conn = self._get_connection()
+
             self._update_batch_status(conn, batch_id, "processing")
 
             with conn.cursor() as cursor:
@@ -50,8 +54,6 @@ class RatingsAggregator:
                 start_id=start_id,
                 end_id=end_id,
             )
-            fetch_query = "SELECT movie_id, rating FROM movies.ratings WHERE movie_id BETWEEN %s AND %s"
-
             df = pd.read_sql_query(fetch_query, conn, params=(start_id, end_id))
 
             if df.empty:
@@ -70,7 +72,6 @@ class RatingsAggregator:
                 columns={"mean": "average_rating", "count": "rating_count"},
                 inplace=True,
             )
-
             aggregation["average_rating"] = aggregation["average_rating"].round(5)
 
             log.info(
@@ -80,7 +81,7 @@ class RatingsAggregator:
             )
             with conn.cursor() as cursor:
                 insert_data = [
-                    (index, row["average_rating"], row["rating_count"])
+                    (int(index), float(row["average_rating"]), int(row["rating_count"]))
                     for index, row in aggregation.iterrows()
                 ]
                 insert_query = "INSERT INTO movies.ratings_summary_staging (movie_id, average_rating, rating_count) VALUES %s"
@@ -91,7 +92,23 @@ class RatingsAggregator:
 
         except Exception as e:
             log.error("Failed to process batch", batch_id=batch_id, error=str(e))
-            self._update_batch_status(conn, batch_id, "failed")
+            if conn:
+                conn.rollback()
+
+            status_conn = None
+            try:
+                status_conn = self._get_connection()
+                self._update_batch_status(status_conn, batch_id, "failed")
+            except Exception as status_e:
+                log.error(
+                    "CRITICAL: Failed to even mark batch as failed!",
+                    batch_id=batch_id,
+                    status_error=str(status_e),
+                )
+            finally:
+                if status_conn:
+                    status_conn.close()
             raise
         finally:
-            conn.close()
+            if conn:
+                conn.close()
