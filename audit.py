@@ -20,6 +20,7 @@ class Auditor:
         self.postgres_loader = PostgresLoader()
         self.neo4j_loader = Neo4jLoader()
         self.mismatches = 0
+        self.aggregation_mismatches = 0
 
     def _get_all_movie_ids_from_source(self):
         log.info("Fetching all movie IDs from source (MySQL)...")
