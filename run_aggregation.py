@@ -129,6 +129,8 @@ def main():
 
     dispatcher.run_parallel_aggregation()
 
+    dispatcher.finalize_promotion()
+
     log.info("--- Aggregation Pipeline Finished ---")
 
 
