@@ -7,9 +7,12 @@ services:
     volumes:
       - .:/app
     depends_on:
-      - mysql_db
-      - postgres_db
-      - neo4j_db
+      mysql_db:
+        condition: service_healthy
+      postgres_db:
+        condition: service_healthy
+      neo4j_db:
+        condition: service_healthy
     networks:
       - chariot_network
 
@@ -28,6 +31,11 @@ services:
       - ./data:/var/lib/mysql-files
     networks:
       - chariot_network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   postgres_db:
     image: postgres:16
@@ -43,6 +51,11 @@ services:
       - ./scripts/postgres_init.sql:/docker-entrypoint-initdb.d/init.sql
     networks:
       - chariot_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   neo4j_db:
     image: neo4j:5.26
@@ -56,6 +69,11 @@ services:
       - neo4j_data:/data
     networks:
       - chariot_network
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 networks:
   chariot_network:
