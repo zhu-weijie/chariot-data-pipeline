@@ -30,6 +30,13 @@ def initialize_neo4j():
             """
             )
 
+            session.run(
+                """
+                CREATE CONSTRAINT user_id_unique IF NOT EXISTS
+                FOR (u:User) REQUIRE u.userId IS UNIQUE
+            """
+            )
+
             log.info("Neo4j schema constraints applied successfully.")
 
     except Exception as e:
