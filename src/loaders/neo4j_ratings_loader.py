@@ -1,6 +1,7 @@
 import structlog
 from typing import List, Dict, Tuple
 from neo4j import GraphDatabase
+from decimal import Decimal
 
 from config.config import settings
 from src.interfaces.loader import Loader
@@ -39,26 +40,32 @@ class Neo4jRatingsLoader(Loader):
                 log.info("No ratings found in Neo4j, starting from scratch.")
                 return (0, 0)
 
+    def _transform_batch(self, batch: List[Dict]) -> List[Dict]:
+        for record in batch:
+            if "rating" in record and isinstance(record["rating"], Decimal):
+                record["rating"] = float(record["rating"])
+        return batch
+
     def write_batch(self, batch: List[Dict]) -> None:
         if not batch:
             log.warn("Batch is empty, nothing to write to Neo4j.")
             return
 
+        transformed_batch = self._transform_batch(batch)
+
         query = """
         UNWIND $batch AS rating_data
         
         MATCH (m:Movie {movieId: rating_data.movieId})
-        
         MERGE (u:User {userId: rating_data.userId})
-        
         MERGE (u)-[r:RATED]->(m)
         SET r.rating = rating_data.rating, r.timestamp = rating_data.timestamp
         """
-        log.info("Writing ratings batch to Neo4j", num_records=len(batch))
+        log.info("Writing ratings batch to Neo4j", num_records=len(transformed_batch))
 
         try:
             with self._get_session() as session:
-                session.run(query, batch=batch)
+                session.run(query, batch=transformed_batch)
             log.info("Ratings batch written successfully to Neo4j.")
         except Exception as e:
             log.error("Failed to write ratings batch to Neo4j", error=str(e))
