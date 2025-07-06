@@ -126,7 +126,7 @@ class Auditor:
             )
             return
 
-        expected_avg = round(np.mean(raw_ratings), 5)
+        expected_avg = round(float(np.mean(raw_ratings)), 5)
         expected_count = len(raw_ratings)
 
         summary_record = self._get_postgres_summary_record(movie_id)
