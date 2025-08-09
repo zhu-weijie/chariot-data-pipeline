@@ -137,3 +137,196 @@ When you are finished, this command will stop and remove all containers and netw
 ```sh
 docker compose down -v
 ```
+
+## Design Diagrams
+
+### Relational Model
+
+```mermaid
+erDiagram
+    movies {
+        int movie_id PK "Primary Key"
+        varchar title "Movie Title"
+        text[] genres "Array of genre strings"
+    }
+
+    ratings {
+        int user_id PK "Part of Composite PK"
+        int movie_id PK, FK "Part of Composite PK, Foreign Key"
+        decimal rating "User's rating"
+        bigint timestamp "Unix timestamp of rating"
+    }
+
+    aggregation_batches {
+        int batch_id PK "Primary Key for the job"
+        int start_movie_id "Start of movie range"
+        int end_movie_id "End of movie range"
+        varchar status "'pending', 'processing', 'complete', 'failed'"
+    }
+    
+    ratings_summary {
+        int movie_id PK, FK "Foreign Key to movies table"
+        decimal average_rating "Calculated average rating"
+        int rating_count "Total number of ratings"
+    }
+
+    movies ||--|{ ratings : "has"
+    movies ||--|| ratings_summary : "is summarized by"
+```
+
+### Graph Model
+
+```mermaid
+graph TD
+    subgraph "Node Types & Properties"
+        U[("User <br/> {userId}")];
+        M[("Movie <br/> {movieId, title}")];
+        G[("Genre <br/> {name}")];
+    end
+
+    subgraph "Example Relationships"
+        U -- "RATED <br/> {rating: 4.0, timestamp: ...}" --> M;
+        M -- "IN_GENRE" --> G;
+    end
+```
+
+### Class Diagram
+
+```mermaid
+classDiagram
+    class Extractor {
+        <<Interface>>
+        +read_batch(batch_size, high_water_mark) list
+        +get_next_high_water_mark(batch) any
+    }
+
+    class Loader {
+        <<Interface>>
+        +get_high_water_mark() any
+        +write_batch(batch) None
+    }
+
+    Extractor <|-- MySQLExtractor
+    Extractor <|-- MySQLRatingsExtractor
+    
+    Loader <|-- PostgresLoader
+    Loader <|-- PostgresRatingsLoader
+    Loader <|-- Neo4jLoader
+    Loader <|-- Neo4jRatingsLoader
+
+    class PipelineConductor {
+        -extractor: Extractor
+        -loaders: list~Loader~
+        +run_concurrently()
+    }
+
+    PipelineConductor o-- "1" Extractor
+    PipelineConductor o-- "1..*" Loader
+
+    class AggregationDispatcher {
+        +run_parallel_aggregation()
+    }
+
+    class RatingsAggregator {
+        +process_batch(batch_id)
+    }
+
+    AggregationDispatcher ..> RatingsAggregator : uses
+```
+
+### C4 Component Diagram
+
+```mermaid
+C4Component
+    title Component Diagram for Chariot ETL System
+
+    System_Boundary(chariot_system, "Chariot Data Pipeline") {
+        Container(python_app, "ETL Application", "Python 3.12, Docker", "The main containerized application that runs all ETL logic.")
+    }
+    
+    Container_Boundary(python_app_boundary, "ETL Application") {
+        Component(conductor, "Conductor", "Python Class", "Orchestrates I/O-bound pipelines using threads.")
+        Component(dispatcher, "Dispatcher", "Python Script", "Orchestrates CPU-bound pipelines using multiprocessing.")
+        Component(aggregator, "Aggregator", "Python Class", "Performs CPU-heavy calculations using Pandas.")
+        Component(extractors, "Extractors", "Python Module", "Handles reading data from the source database.")
+        Component(loaders, "Loaders", "Python Module", "Handles writing data to destination databases.")
+    }
+    
+    SystemDb_Ext(mysql, "MySQL Database", "Source of raw movie and rating data.")
+    SystemDb_Ext(postgres, "PostgreSQL Database", "Destination for raw data and aggregated summaries.")
+    SystemDb_Ext(neo4j, "Neo4j Database", "Destination for graph model of data.")
+
+    Rel(conductor, extractors, "Uses")
+    Rel(conductor, loaders, "Uses")
+
+    Rel(dispatcher, aggregator, "Dispatches work to")
+    
+    Rel(aggregator, postgres, "Reads raw data from and writes aggregated data to", "JDBC")
+
+    Rel_Back(extractors, mysql, "Reads from", "JDBC")
+    Rel_Back(loaders, postgres, "Writes to", "JDBC")
+    Rel_Back(loaders, neo4j, "Writes to", "Bolt")
+```
+
+### Sequence Diagram
+
+```mermaid
+sequenceDiagram
+    participant main as main.py
+    participant conductor as PipelineConductor
+    participant executor as ThreadPoolExecutor
+    participant mysql as MySQLExtractor
+    participant pg as PostgresLoader
+    participant neo4j as Neo4jLoader
+
+    main->>conductor: __init__(extractor, [pg_loader, neo4j_loader])
+    main->>conductor: run_concurrently()
+    activate conductor
+    
+    conductor->>executor: submit(_run_pipeline_for_loader, pg)
+    conductor->>executor: submit(_run_pipeline_for_loader, neo4j)
+
+    par Postgres Pipeline
+        loop For each batch
+            executor->>pg: get_high_water_mark()
+            executor->>mysql: read_batch()
+            executor->>pg: write_batch()
+        end
+    and Neo4j Pipeline
+        loop For each batch
+            executor->>neo4j: get_high_water_mark()
+            executor->>mysql: read_batch()
+            executor->>neo4j: write_batch()
+        end
+    end
+    
+    conductor->>main: Execution finished
+    deactivate conductor
+```
+
+### Process Flowchart
+
+```mermaid
+graph TD
+    A[Start] --> B(Stage 1: Concurrent Data Transfer);
+    
+    subgraph Stage 1
+        B1[Transfer Movies to PG & Neo4j] --> B2[Transfer Ratings to PG & Neo4j];
+    end
+
+    B2 --> C(Stage 2: Parallel Aggregation);
+    
+    subgraph Stage 2
+        C1[Pre-process: Create Batches] --> C2[Dispatch Batches to Worker Pool];
+        C2 --> C3[Promote Staging Data to Final Table];
+    end
+    
+    C3 --> G(Stage 3: Data Integrity Audit);
+    
+    subgraph Stage 3
+        G1[Run Audit Script] --> G2{Audit Succeeded?};
+    end
+
+    G2 -- Yes --> H[✅ End: Success];
+    G2 -- No --> I[❌ End: Failure];
+```
